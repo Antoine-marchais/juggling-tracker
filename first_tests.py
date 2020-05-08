@@ -29,7 +29,7 @@ utils.display_frames(frames)
 
 # Dans un premier temps nous allons calculer la différence entre les images successives de la vidéo, ce qui permet de capturer les brusque variations d'intensité dans le temps:
 
-frames_gray = [cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) for frame in frames][:101]
+frames_gray = [cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) for frame in frames][:100]
 frames_gray = [cv2.GaussianBlur(frame, (5,5), 0) for frame in frames_gray]
 utils.display_frames(frames_gray, fps=20)
 
@@ -68,52 +68,62 @@ def get_diff(img1, img2, mode="basic", window_size=5):
 def remove_local_mean(frames, mode="basic", window_size=5, time_delta=5):
     pad_frames = []
     new_frames = []
-    overflow = time_delta-1//2
+    overflow = (time_delta-1)//2
     for i in range(overflow):
         pad_frames.append(frames[0])
     pad_frames = pad_frames + frames
     for i in range(overflow):
         pad_frames.append(frames[-1])
-    for frame_i in range(len(frames)):
-        context_array = np.array(pad_frames[frame_i:frame_i+time_delta], dtype=np.float32)
-        mean = np.sum(context_array, axis=0)/time_delta
-        new_frames.append(np.uint8(np.abs(np.float32(frames[i])-mean)))
+    for frame_i in tqdm(range(len(frames))):
+        context_frames = np.array(pad_frames[frame_i:frame_i+overflow] + pad_frames[frame_i+overflow+1:frame_i+time_delta], dtype=np.float32)
+        mean = np.sum(context_frames, axis=0)/(time_delta-1)
+        frame_diff = np.abs(np.float32(frames[frame_i])-mean)
+        if mode == "mean":
+            kernel = np.ones((window_size, window_size))/(window_size**2)
+            frame_diff = utils.convolve(frame_diff, kernel)
+        elif mode == "mindiff":
+            frame_diff = utils.conv_min(frame_diff, (window_size, window_size))
+        new_frames.append(np.uint8(frame_diff))
     return new_frames
         
 
 
-# -
-
+# +
 frames_diff = []
+
+#frames_diff = remove_local_mean(frames_gray, mode="mindiff", window_size=7, time_delta=3)
+
 for i in tqdm(range(len(frames_gray)-2)):
     frames_diff.append(get_diff(frames_gray[i]/2, frames_gray[i+2]/2, mode="mindiff", window_size=7))
 utils.display_frames(frames_diff)
+# -
 
-frames_thresh = [cv2.threshold(frame, 20, 255, cv2.THRESH_BINARY)[1] for frame in frames_diff]
+utils.display_frames(frames_diff, fps=5)
+
+frames_thresh = [cv2.threshold(frame, 10, 255, cv2.THRESH_BINARY)[1] for frame in frames_diff]
 utils.display_frames(frames_thresh)
+
 
 # ## Background removal
 
 # +
-backsub = cv2.createBackgroundSubtractorKNN()
-
 def get_foreground_masks(frames):
-    backsub = cv2.createBackgroundSubtractorKNN()
+    backsub = cv2.createBackgroundSubtractorMOG2(history=3, varThreshold=10)
     # training the substractor
-    for frame in frames[:30]:
+    for frame in tqdm(frames[:30], desc="training substractor : "):
         backsub.apply(frame)
 
     # getting foreground masks
     foregrounds = []
-    for frame in frames :
+    for frame in tqdm(frames, desc="applying subtractor : ") :
         foregrounds.append(backsub.apply(frame))
     return foregrounds
 
-foregrounds = get_foreground_masks(frames)
+foregrounds = get_foreground_masks(frames[:100])
 
 # -
 
-utils.display_frames(foregrounds)
+utils.display_frames(foregrounds, fps=5)
 
 # ## Extracting movement with optical flow
 
@@ -158,15 +168,18 @@ utils.display_frames(results,fps=10)
 
 # +
 def blobify(img):
-    kernel = np.ones((3,3), dtype=np.uint8)
-    res= cv2.erode(img, kernel, iterations=4)
-    test_frame = cv2.dilate(res, kernel, iterations=12)
+    kernel_erode = np.ones((3,3), dtype=np.uint8)
+    kernel_dilate = np.ones((3,3), dtype=np.uint8)
+    res = img.copy()
+    for i in range(4):
+        res= cv2.erode(res, kernel_erode, iterations=2)
+        res = cv2.dilate(res, kernel_dilate, iterations=2)
     return res
 
-frames_blob = [blobify(frame) for frame in frames_thresh]
+frames_blob = [blobify(frame) for frame in foregrounds]
 # -
 
-utils.display_frames(frames_blob)
+utils.display_frames(frames_blob, fps=5)
 
 # +
 params = cv2.SimpleBlobDetector_Params()
@@ -174,19 +187,19 @@ params = cv2.SimpleBlobDetector_Params()
 params.filterByColor = True
 params.blobColor = 255
 
-params.filterByCircularity = False
-params.minCircularity = 0.5
+params.filterByCircularity = True
+params.minCircularity = 0.3
 
 params.filterByArea = True
-params.minArea = 100
-params.maxArea = 10000
+params.minArea = 1000
+params.maxArea = 1000000
 
 params.filterByConvexity = False
 
 params.filterByInertia = False
 params.minInertiaRatio = 0.2
 
-params.minDistBetweenBlobs = 200
+params.minDistBetweenBlobs = 100
 
 index_img = 20
 
@@ -207,7 +220,7 @@ results = []
 for i, frame in enumerate(frames_blob):
     keypoints = detector.detect(frame)
     frames_keypoints.append([keypoint.pt for keypoint in keypoints])
-    results.append(draw_keypoints(frames[i+1], frames_keypoints[i], color=(0, 255, 0)))
+    results.append(draw_keypoints(frames[i], frames_keypoints[i], color=(0, 255, 0)))
 # -
 
 utils.display_frames(results, fps=10)
@@ -223,24 +236,25 @@ class Trajectory:
         self.staleness = 0
 
 def get_trajectories(frames, frames_kp, min_dist=10, max_staleness=1):
-    lk_params = dict( winSize  = (30,30),
+    lk_params = dict( winSize  = (100,100),
                     maxLevel = 4,
                     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     saved_trajectories = []
     current_trajectories = [Trajectory(0,kp) for kp in frames_kp[0]]
-    for i in range(len(frames)-1):
+    for i in range(1,len(frames)):
 
         # we compute optical flow for the points in the last trajectories
         last_kps = np.array([trajectory.points[-1] for trajectory in current_trajectories], dtype=np.float32).reshape(-1,1,2)
-        opt_kps, st, err = cv2.calcOpticalFlowPyrLK(frames[i], frames[i+1], last_kps, None, **lk_params)
+        opt_kps, st, err = cv2.calcOpticalFlowPyrLK(frames[i-1], frames[i], last_kps, None, **lk_params)
         opt_kps = [opt_kps[j].ravel() for j in range(opt_kps.shape[0])] if opt_kps is not None else []
 
         # we extend the trajectories with the coresponding keypoint, or the calculated optical flow
         extend_trajectories(current_trajectories, opt_kps, frames_kp[i], min_dist, i)
-
+        
         # we save trajectories which have gone stale
         stale_trajectories = remove_stale_trajectories(current_trajectories, max_staleness)
         saved_trajectories = saved_trajectories + stale_trajectories
+    cv2.destroyAllWindows()
     return saved_trajectories
 
 def extend_trajectories(trajectories, optical_keypoints, real_keypoints, min_dist, frame_i):
@@ -266,14 +280,14 @@ def remove_stale_trajectories(trajectories, max_staleness):
         trajectories.remove(trajectory)
     return stale_trajectories
             
-trajectories = get_trajectories(frames[1:101], frames_keypoints, min_dist=150, max_staleness=2)
+trajectories = get_trajectories(frames[:100], frames_keypoints, min_dist=200, max_staleness=3)
 # -
 
 print(max([len(trajectory.points) for trajectory in trajectories]))
 print(len(trajectories))
 print(sum([len(kps) for kps in frames_keypoints]))
 
-best_trajectories = sorted(trajectories, key=lambda trajectory:len(trajectory.points), reverse=True)[:20]
+best_trajectories = sorted(trajectories, key=lambda trajectory:len(trajectory.points), reverse=True)[:10]
 print(best_trajectories[0].points)
 
 
@@ -307,7 +321,7 @@ def view_trajectories(frames, trajectories, fps=5):
                 cv2.circle(displays[i], (int(trajectory_point[0]), int(trajectory_point[1])), frames[i].shape[0]//70, color=color, thickness=-1)
     utils.display_frames(displays, fps=fps)
 
-view_trajectories(frames[1:101], best_trajectories, fps=5)
+view_trajectories(frames[:100], best_trajectories, fps=5)
 # -
 
 
