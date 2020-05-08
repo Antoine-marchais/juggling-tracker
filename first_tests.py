@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -7,8 +8,8 @@
 #       format_version: '1.5'
 #       jupytext_version: 1.4.2
 #   kernelspec:
-#     display_name: 'Python 3.6.9 64-bit (''visord'': venv)'
-#     name: python36964bitvisordvenvfc106c38ce1c4db7ab15237db0033b94
+#     display_name: 'Python 3.6.9 64-bit (''juggle_tracker'': venv)'
+#     name: python36964bitjuggletrackervenv5397e930a4e5478eaf4e831a4957fa9d
 # ---
 
 # # Object tracking tests
@@ -18,8 +19,295 @@
 import cv2
 import numpy as np
 import utils
+from tqdm import tqdm
+# %matplotlib inline
 
 frames = utils.read_video("./data/juggling_front.mp4")
 utils.display_frames(frames)
+
+# ## Image differences
+
+# Dans un premier temps nous allons calculer la différence entre les images successives de la vidéo, ce qui permet de capturer les brusque variations d'intensité dans le temps:
+
+frames_gray = [cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) for frame in frames][:101]
+frames_gray = [cv2.GaussianBlur(frame, (5,5), 0) for frame in frames_gray]
+utils.display_frames(frames_gray, fps=20)
+
+
+def diff_thresh(img1, img2, threshold):
+    res = np.zeros(img1.shape)
+    res[np.abs(img1-img2) > threshold] = 255
+    return res
+
+
+# Le résultat étant assez bruité, nous allons moyenner la différence :
+
+def diff_thresh_moy(img1, img2, threshold, window_size):
+    res = np.zeros(img1.shape)
+    diff = np.abs(img1-img2)
+    kernel = np.ones((window_size, window_size))/(window_size**2)
+    moy_diff = utils.convolve(diff, kernel)
+    res[np.abs(img1-img2) > threshold] = 255
+    return res
+
+
+# Regroupons ces fonctions dans une fonction de différence d'image généralisée : 
+
+# +
+def get_diff(img1, img2, mode="basic", window_size=5):
+    new_img1 = np.float32(img1)
+    new_img2 = np.float32(img2)
+    diff = np.abs(new_img1-new_img2)
+    if mode == "mean":
+        kernel = np.ones((window_size, window_size))/(window_size**2)
+        diff = utils.convolve(diff, kernel)
+    elif mode == "mindiff":
+        diff = utils.conv_min(diff, (window_size, window_size))
+    return np.uint8(diff)
+
+def remove_local_mean(frames, mode="basic", window_size=5, time_delta=5):
+    pad_frames = []
+    new_frames = []
+    overflow = time_delta-1//2
+    for i in range(overflow):
+        pad_frames.append(frames[0])
+    pad_frames = pad_frames + frames
+    for i in range(overflow):
+        pad_frames.append(frames[-1])
+    for frame_i in range(len(frames)):
+        context_array = np.array(pad_frames[frame_i:frame_i+time_delta], dtype=np.float32)
+        mean = np.sum(context_array, axis=0)/time_delta
+        new_frames.append(np.uint8(np.abs(np.float32(frames[i])-mean)))
+    return new_frames
+        
+
+
+# -
+
+frames_diff = []
+for i in tqdm(range(len(frames_gray)-2)):
+    frames_diff.append(get_diff(frames_gray[i]/2, frames_gray[i+2]/2, mode="mindiff", window_size=7))
+utils.display_frames(frames_diff)
+
+frames_thresh = [cv2.threshold(frame, 20, 255, cv2.THRESH_BINARY)[1] for frame in frames_diff]
+utils.display_frames(frames_thresh)
+
+# ## Background removal
+
+# +
+backsub = cv2.createBackgroundSubtractorKNN()
+
+def get_foreground_masks(frames):
+    backsub = cv2.createBackgroundSubtractorKNN()
+    # training the substractor
+    for frame in frames[:30]:
+        backsub.apply(frame)
+
+    # getting foreground masks
+    foregrounds = []
+    for frame in frames :
+        foregrounds.append(backsub.apply(frame))
+    return foregrounds
+
+foregrounds = get_foreground_masks(frames)
+
+# -
+
+utils.display_frames(foregrounds)
+
+# ## Extracting movement with optical flow
+
+optical_flows = []
+for i_frame in tqdm(range(len(frames_gray)-1)):
+    hsv_flow = np.zeros_like(frames[0])
+    flow = cv2.calcOpticalFlowFarneback(frames_gray[i_frame], frames_gray[i_frame+1], None, 0.5, 3, 15, 3, 5, 1.2, 0)
+    mag, ang = cv2.cartToPolar(flow[...,0], flow[...,1])
+    hsv_flow[...,1] = 255
+    hsv_flow[...,0] = ang*180/np.pi/2
+    hsv_flow[...,2] = cv2.normalize(mag,None,0,255,cv2.NORM_MINMAX)
+    bgr_flow = cv2.cvtColor(hsv_flow,cv2.COLOR_HSV2BGR)
+    optical_flows.append(bgr_flow)
+
+utils.display_frames(optical_flows, fps=10)
+
+# ## Circle detection with hough transform
+
+# +
+results = [np.copy(frame) for frame in foregrounds]
+
+for i, frame in enumerate(foregrounds):
+    # detect circles in the image
+    circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, 1.2, 5)
+    # ensure at least some circles were found
+    if circles is not None:
+    # convert the (x, y) coordinates and radius of the circles to integers
+        circles = np.round(circles[0, :]).astype("int")
+        # loop over the (x, y) coordinates and radius of the circles
+        for (x, y, r) in circles:
+            # draw the circle in the output image, then draw a rectangle
+            # corresponding to the center of the circle
+            cv2.circle(results[i], (x, y), r, (0, 255, 0), 4)
+            cv2.rectangle(results[i], (x - 5, y - 5), (x + 5, y + 5), (0, 128, 255), -1)
+            # show the output image
+# -
+
+utils.display_frames(results,fps=10)
+
+
+# ## blob detection
+
+# +
+def blobify(img):
+    kernel = np.ones((3,3), dtype=np.uint8)
+    res= cv2.erode(img, kernel, iterations=4)
+    test_frame = cv2.dilate(res, kernel, iterations=12)
+    return res
+
+frames_blob = [blobify(frame) for frame in frames_thresh]
+# -
+
+utils.display_frames(frames_blob)
+
+# +
+params = cv2.SimpleBlobDetector_Params()
+
+params.filterByColor = True
+params.blobColor = 255
+
+params.filterByCircularity = False
+params.minCircularity = 0.5
+
+params.filterByArea = True
+params.minArea = 100
+params.maxArea = 10000
+
+params.filterByConvexity = False
+
+params.filterByInertia = False
+params.minInertiaRatio = 0.2
+
+params.minDistBetweenBlobs = 200
+
+index_img = 20
+
+detector = cv2.SimpleBlobDetector_create(params)
+frames_keypoints = []
+
+def draw_keypoints(img, keypoints, color=None, radius=None):
+    if color == None:
+        color=np.random.randint(0,256,size=3).tolist()
+    if radius == None:
+        radius = img.shape[0]//70
+    result = np.copy(img)
+    for keypoint in keypoints:
+        cv2.circle(result, (int(keypoint[0]), int(keypoint[1])), radius, color=color, thickness=-1)
+    return result
+
+results = []
+for i, frame in enumerate(frames_blob):
+    keypoints = detector.detect(frame)
+    frames_keypoints.append([keypoint.pt for keypoint in keypoints])
+    results.append(draw_keypoints(frames[i+1], frames_keypoints[i], color=(0, 255, 0)))
+# -
+
+utils.display_frames(results, fps=10)
+
+
+# ## Finding trajectories with Lucas-Kanade method
+
+# + tags=["outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend"]
+class Trajectory:
+    def __init__(self, frame_i, startpoint):
+        self.start_frame = frame_i
+        self.points = [startpoint]
+        self.staleness = 0
+
+def get_trajectories(frames, frames_kp, min_dist=10, max_staleness=1):
+    lk_params = dict( winSize  = (30,30),
+                    maxLevel = 4,
+                    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    saved_trajectories = []
+    current_trajectories = [Trajectory(0,kp) for kp in frames_kp[0]]
+    for i in range(len(frames)-1):
+
+        # we compute optical flow for the points in the last trajectories
+        last_kps = np.array([trajectory.points[-1] for trajectory in current_trajectories], dtype=np.float32).reshape(-1,1,2)
+        opt_kps, st, err = cv2.calcOpticalFlowPyrLK(frames[i], frames[i+1], last_kps, None, **lk_params)
+        opt_kps = [opt_kps[j].ravel() for j in range(opt_kps.shape[0])] if opt_kps is not None else []
+
+        # we extend the trajectories with the coresponding keypoint, or the calculated optical flow
+        extend_trajectories(current_trajectories, opt_kps, frames_kp[i], min_dist, i)
+
+        # we save trajectories which have gone stale
+        stale_trajectories = remove_stale_trajectories(current_trajectories, max_staleness)
+        saved_trajectories = saved_trajectories + stale_trajectories
+    return saved_trajectories
+
+def extend_trajectories(trajectories, optical_keypoints, real_keypoints, min_dist, frame_i):
+    added_kps = []
+    for trajectory, opt_kp in zip(trajectories, optical_keypoints):
+        added_to_trajectory = False
+        for kp in real_keypoints:
+            if np.sum((np.array(kp)-opt_kp)**2) < min_dist and not added_to_trajectory and not kp in added_kps:
+                trajectory.staleness = 0
+                trajectory.points.append(kp)
+                added_kps.append(kp)
+                added_to_trajectory = True
+        if not added_to_trajectory :
+            trajectory.staleness += 1
+            trajectory.points.append(opt_kp)
+    remaining_kps = [kp for kp in real_keypoints if kp not in added_kps]
+    for kp in remaining_kps :
+        trajectories.append(Trajectory(frame_i, kp))
+
+def remove_stale_trajectories(trajectories, max_staleness):
+    stale_trajectories = [trajectory for trajectory in trajectories if trajectory.staleness >= max_staleness]
+    for trajectory in stale_trajectories:
+        trajectories.remove(trajectory)
+    return stale_trajectories
+            
+trajectories = get_trajectories(frames[1:101], frames_keypoints, min_dist=150, max_staleness=2)
+# -
+
+print(max([len(trajectory.points) for trajectory in trajectories]))
+print(len(trajectories))
+print(sum([len(kps) for kps in frames_keypoints]))
+
+best_trajectories = sorted(trajectories, key=lambda trajectory:len(trajectory.points), reverse=True)[:20]
+print(best_trajectories[0].points)
+
+
+# +
+def draw_trajectory(img, trajectory, color=None, thickness=None):
+    if color == None:
+        color = np.random.randint(0, 256, size=3).tolist()
+    if thickness == None:
+        thickness = img.shape[0]//100
+    res = img.copy()
+    points = [(int(pt[0]), int(pt[1])) for pt in trajectory.points]
+    for i in range(len(points)-1):
+        cv2.line(res, points[i], points[i+1], color=color, thickness=thickness)
+    return res
+
+trajectory = best_trajectories[5]
+print(trajectory.start_frame)
+img_trajectory = draw_trajectory(frames[trajectory.start_frame], trajectory)
+utils.display_img(img_trajectory)
+
+
+# +
+def view_trajectories(frames, trajectories, fps=5):
+    displays = [frame.copy() for frame in frames]
+    colors = [np.random.randint(0, 256, size=3).tolist() for trajectory in trajectories]
+    for i in range(len(frames)):
+        for color, trajectory in zip(colors, trajectories):
+            if i >= trajectory.start_frame and i < trajectory.start_frame + len(trajectory.points):
+                displays[i] = draw_trajectory(displays[i], trajectory, color=color)
+                trajectory_point = trajectory.points[i-trajectory.start_frame]
+                cv2.circle(displays[i], (int(trajectory_point[0]), int(trajectory_point[1])), frames[i].shape[0]//70, color=color, thickness=-1)
+    utils.display_frames(displays, fps=fps)
+
+view_trajectories(frames[1:101], best_trajectories, fps=5)
+# -
 
 

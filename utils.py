@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 def load_image(path, color):
     """Load an image in a numpy array
