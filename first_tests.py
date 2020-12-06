@@ -228,7 +228,6 @@ utils.display_frames(results, fps=10)
 
 # ## Finding trajectories with Lucas-Kanade method
 
-# + tags=["outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend"]
 class Trajectory:
     def __init__(self, frame_i, startpoint):
         self.start_frame = frame_i
