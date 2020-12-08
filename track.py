@@ -5,10 +5,12 @@ import utils
 from argparse import ArgumentParser
 
 def get_foreground_masks(frames):
-    """
+    """Compute the foreground mask using a MOG2 background subtractor.
 
-    :param frames:
-    :return:
+    Uses the cv2 implementation createBackgroundSubtractorMOG2 of a MOG 2
+    background subtractor trained on the thirty middle frames of the video.
+    :param list frames: video frames
+    :return: list foregrounds: foreground masks
     """
     backsub = cv2.createBackgroundSubtractorMOG2(history=3, varThreshold=10)
     # training the substractor on the 30 middle frames
@@ -25,10 +27,11 @@ def get_foreground_masks(frames):
 
 
 def blobify(img):
-    """
+    """Improve blob quality using kernel erosion and dilation.
 
-    :param img:
-    :return:
+    Uses 3x3 erosion and dilation kernels.
+    :param np.array img: image foreground mask array.
+    :return: np.array img: blobified foreground mask.
     """
     kernel_erode = np.ones((3,3), dtype=np.uint8)
     kernel_dilate = np.ones((3,3), dtype=np.uint8)
@@ -40,10 +43,10 @@ def blobify(img):
 
 
 def get_keypoints_hough(img):
-    """get keypoints using the Hough transfrom for circle detection
+    """Get keypoints using the Hough transfrom for circle detection.
 
-    :param img: np.ndarray, image to get keypoints from
-    :return: list(list(float, float)), list of keypoints in the image
+    :param np.ndarray img: image to get keypoints from.
+    :return: list(list(float, float)), list of keypoints in the image.
     """
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=80, minRadius=10, maxRadius=50)
     keypoints = [[x, y] for (x, y, r) in circles[0, :]] if circles is not None else []
@@ -51,9 +54,9 @@ def get_keypoints_hough(img):
 
 
 def get_blob_detector():
-    """
+    """Create a blob detector.
 
-    :return:
+    :return: SimpleBlobDetector
     """
     params = cv2.SimpleBlobDetector_Params()
     params.filterByColor = True
@@ -78,12 +81,12 @@ def get_blob_detector():
 
 
 def draw_keypoints(img, keypoints, color=None, radius=None):
-    """
+    """Draw keypoints on an image.
 
-    :param img:
-    :param keypoints:
-    :param color:
-    :param radius:
+    :param np.array img: frame to add keypoints to.
+    :param list keypoints: list of keypoint coordinates.
+    :param tuple color: color tuple.
+    :param int radius: radius of drawn keypoint circle.
     :return:
     """
     if color == None:
@@ -97,16 +100,27 @@ def draw_keypoints(img, keypoints, color=None, radius=None):
 
 
 class Trajectory:
-    """
-    """
+    """Class to describe a trajectory and provide useful methods"""
     def __init__(self, frame_i, start_point):
+        """Create a Trajectory object
+
+        :param int frame_i: frame index of the first trajectory keypoint
+        :param tuple start_point: first keypoint in the trajectory
+        """
         self.points_dict = {frame_i: start_point}
-        self.staleness = 0
+        self.staleness = 0  # For future improvements
     
     def add_point(self, frame, point):
+        """Add a keypoint to the trajectory"""
         self.points_dict[frame] = point
-        
+
+    # For future improvements
     def is_active(self, frame, max_staleness):
+        """Check if the trajectory span contains a given input frame.
+
+        A trajectory is active at a given frame index if the the index is between
+        the trajectory’s first and last keypoint frame indexes.
+        """
         if frame < self.span[0]:
             return False
         if self.staleness >= max_staleness:
@@ -115,6 +129,7 @@ class Trajectory:
     
     
     def next_found_frame(self, frame_idx):
+        """Return the next frame (after frame_idx) in which the trajectory has a keypoint."""
         for frame in self.found_frames:
             if frame > frame_idx:
                 return frame
@@ -122,19 +137,23 @@ class Trajectory:
     
     @property
     def found_frames(self):
+        """List of sorted frame indexes in which the trajectory has a keypoint."""
         return sorted(self.points_dict.keys())
     
     @property
     def span(self):
+        """Trajectory index span."""
         found_frames = self.found_frames
         return list(range(found_frames[0], found_frames[-1] + 1))
     
     @property
     def points(self):
+        """Trajectory keypoints."""
         return self.points_dict.items()
     
     @property
     def start_frame(self):
+        """First frame in which the trajectory has a keypoint."""
         return self.span[0]
 
 
@@ -170,11 +189,11 @@ def filter_valid_keypoints(previous_coordinates, keypoints, x_increasing, y_incr
 
 
 def closest_ball_index(previous_coordinates, valid_keypoints, max_dist):
-    """
+    """Index of the closest keypoint within a maximum distance.
 
-    :param previous_coordinates:
-    :param valid_keypoints:
-    :param max_dist:
+    :param tuple previous_coordinates: coordinates of previous keypoint.
+    :param list valid_keypoints: valid keypoints in current image.
+    :param int max_dist: maximum euclidean distance (threshold).
     :return:
     """
     if not valid_keypoints:
@@ -262,7 +281,7 @@ def filter_on_y_height(keypoints):
 
 
 def all_trajectories_checked(keypoints):
-    """Checks if there are an keypoints left"""
+    """Checks if there are an keypoints left."""
     for frame in keypoints:
         if frame:
             return False
@@ -270,15 +289,17 @@ def all_trajectories_checked(keypoints):
 
 
 def first_non_empty_frame_idx(keypoints):
-    """Returns the idex of the first frame that still has keypoints to look at."""
+    """Returns the index of the first frame that still has keypoints to look at."""
     for i, frame in enumerate(keypoints):
         if frame:
             return i
 
 
 def keypoints_to_trajectory(keypoints):
-    """
-    
+    """Determine ball trajectories using detected keypoints.
+
+    :param list keypoints: list of keypoints in each image.
+    :return: list trajectories: unfiltered trajectories.
     """
     # First remove the keypoints that are probably too low to be a ball
     filtered_keypoints = filter_on_y_height(keypoints)
@@ -290,11 +311,7 @@ def keypoints_to_trajectory(keypoints):
 
 
 def filter_trajectories(trajectories):
-    """
-
-    :param trajectories:
-    :return:
-    """
+    """Filter trajectories are probably not a ball."""
     # For now just filter out short trajectories, could reintroduce the removed keypoints into other 
     # trajectories (could belong to another one)
     filtered_trajectories = [trajectory for trajectory in trajectories if len(trajectory.span) > 3]
@@ -302,10 +319,10 @@ def filter_trajectories(trajectories):
 
 
 def trajectory_to_sparse_keypoints(trajectories, length):
-    """
+    """Convert list of trajectories to list of keypoints in each frame.
 
-    :param trajectories:
-    :param length:
+    :param list trajectories: all trajectories to display.
+    :param int length: total length of video in frames.
     :return:
     """
     sparse_keypoints_list = [[] for _ in range(length)]
@@ -315,15 +332,17 @@ def trajectory_to_sparse_keypoints(trajectories, length):
     return sparse_keypoints_list
 
 
-## Lucas-Kanade method
+# Lucas-Kanade method
 
-def complete_trajectory_within_span(trajectory, lk_params, min_dist):
-    """
+def complete_trajectory_within_span(trajectory, frames, lk_params, min_dist):
+    """Fill in missing trajectory keypoints using the Lucas-Kanade method.
 
-    :param trajectory:
-    :param lk_params:
-    :param min_dist:
-    :return:
+    :param Trajectory trajectory: trajectory to fill in.
+    :param list frames: all video frames.
+    :param dict lk_params: parameters for the Lucas-Kanade methode
+    :param int min_dist: minimum euclidean distance between actual keypoint
+     and predicted keypoint to validate prediction.
+    :return: None
     """
     for frame_idx in trajectory.span:
             if frame_idx in trajectory.found_frames:
@@ -361,12 +380,9 @@ def complete_trajectory_within_span(trajectory, lk_params, min_dist):
     
 
 def complete_trajectories(trajectories, frames, min_dist=10):
-    """
+    """Fill in all trajectories using Lucas-Kanade method.
 
-    :param trajectories:
-    :param frames:
-    :param min_dist:
-    :return:
+    Defines the Lucas-Kanade parameters and runs on all trajectories
     """
     lk_params = dict(
         winSize  = (100,100),
@@ -374,16 +390,16 @@ def complete_trajectories(trajectories, frames, min_dist=10):
         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
     )
     for trajectory in trajectories:
-        complete_trajectory_within_span(trajectory, lk_params, min_dist)
+        complete_trajectory_within_span(trajectory, frames, lk_params, min_dist)
 
 
 def draw_trajectory(frames, trajectory, color=None, thickness=None):
-    """
+    """Draw trajectory lines on video frames.
 
-    :param frames:
-    :param trajectory:
-    :param color:
-    :param thickness:
+    :param list frames: all video frames.
+    :param Trajectory trajectory: trajectory to draw.
+    :param tuple color: color tuple.
+    :param int thickness: trajectory line thickness.
     :return:
     """
     if color is None:
@@ -402,13 +418,7 @@ def draw_trajectory(frames, trajectory, color=None, thickness=None):
 
 
 def draw_trajectories(frames, trajectories, color=None):
-    """
-
-    :param frames:
-    :param trajectories:
-    :param fps:
-    :return:
-    """
+    """Draw all trajectories."""
     displays = np.array([frame.copy() for frame in frames])
     if color is None:
         color = np.random.randint(0, 256, size=3).tolist()
@@ -418,6 +428,7 @@ def draw_trajectories(frames, trajectories, color=None):
 
 
 def parse_arguments():
+    """Parse module arguments."""
     parser = ArgumentParser()
     parser.add_argument(
         dest='file', type=str, help='Path to video file.'
