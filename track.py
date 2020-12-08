@@ -396,7 +396,7 @@ def draw_trajectory(frames, trajectory, color=None, thickness=None):
         for point_idx in range(len(points)-1):
             cv2.line(frames[frame], points[point_idx], points[point_idx+1], color=color, thickness=thickness)
         cv2.circle(frames[frame], (int(points[-1][0]), int(points[-1][1])),
-                   frames[0].shape[0]//70, color=color, thickness=-1)
+                   max(frames[0].shape[0]//70, 1), color=color, thickness=-1)
     return frames
 
 
