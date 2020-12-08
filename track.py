@@ -45,7 +45,7 @@ def get_keypoints_hough(img):
     :param img: np.ndarray, image to get keypoints from
     :return: list(list(float, float)), list of keypoints in the image
     """
-    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=60, minRadius=10, maxRadius=50)
+    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=80, minRadius=10, maxRadius=50)
     keypoints = [[x, y] for (x, y, r) in circles[0, :]] if circles is not None else []
     return keypoints
 
@@ -398,7 +398,7 @@ def draw_trajectory(frames, trajectory, color=None, thickness=None):
 
 
 
-def draw_trajectories(frames, trajectories):
+def draw_trajectories(frames, trajectories, color=None):
     """
 
     :param frames:
@@ -407,7 +407,8 @@ def draw_trajectories(frames, trajectories):
     :return:
     """
     displays = np.array([frame.copy() for frame in frames])
-    color = np.random.randint(0, 256, size=3).tolist()
+    if color is None:
+        color = np.random.randint(0, 256, size=3).tolist()
     for trajectory in trajectories:
         displays = draw_trajectory(displays, trajectory, color=color)
     return displays
@@ -474,7 +475,7 @@ if __name__ == '__main__':
 
     if args.movement_path:
         print(f"Saving movements in {args.movement_path}")
-        utils.save_video(frames_blob, args.movement_path, args.save_fps)
+        utils.save_video(frames_blob, args.movement_path, args.save_fps, color=False)
 
     ## Keypoints detection
     # Using Hough transform
@@ -508,15 +509,15 @@ if __name__ == '__main__':
     )
 
     if args.keypoints_path:
-        keypoints_display = [draw_keypoints(frame, kp) for frame, kp in zip(frames, sparse_keypoints)]
+        keypoints_display = [draw_keypoints(frame, kp, color=(0, 255, 0)) for frame, kp in zip(frames, sparse_keypoints)]
         print(f"Saving keypoints to path {args.keypoints_path}")
         utils.save_video(keypoints_display, args.keypoints_path, args.save_fps)
 
-    trajectory_display = draw_trajectories(frames, filtered_trajectories)
+    trajectory_display = draw_trajectories(frames, filtered_trajectories, color=(0, 255, 0))
 
     if args.trajectories_path:
         print(f"Saving trajectories to path {args.trajectories_path}")
-        utils.save_video(keypoints_display, args.keypoints_path, args.save_fps)
+        utils.save_video(trajectory_display, args.trajectories_path, args.save_fps)
 
     display_speed = args.display_fps if args.display_fps else 26
     utils.display_frames(trajectory_display, fps=display_speed)

@@ -71,7 +71,7 @@ def read_video(path):
     return frames
 
 
-def save_video(frames, path, fps):
+def save_video(frames, path, fps, color=True):
     """Save list of images as mp4.
 
     Arguments:
@@ -82,7 +82,7 @@ def save_video(frames, path, fps):
     # Define the codec and create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     path = path.split(".")[0] + ".mp4"
-    out = cv2.VideoWriter(path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]))
+    out = cv2.VideoWriter(path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]), isColor=color)
     for frame in frames:
         out.write(frame)
     out.release()
