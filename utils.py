@@ -80,7 +80,7 @@ def save_video(frames, path, fps):
         fps {int} -- number of frames per second for saved mp4.
     """
     # Define the codec and create VideoWriter object
-    fourcc = cv2.VideoWriter_fourcc(*'FMP4')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     path = path.split(".")[0] + ".mp4"
     out = cv2.VideoWriter(path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]))
     for frame in frames:

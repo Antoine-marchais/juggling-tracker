@@ -4,7 +4,6 @@ import numpy as np
 import utils
 from argparse import ArgumentParser
 
-
 def get_foreground_masks(frames):
     """
 
@@ -146,7 +145,7 @@ def filter_valid_keypoints(previous_coordinates, keypoints, x_increasing, y_incr
             if x_increasing and keypoint[0] < previous_coordinates[0] - direction_leeway:
                 remove_list.append(i)
             # If x coordinates are decreasing, filter keypoints with higher x
-            elif not x_increasing and keypoint[0] > previous_coordinates[0] + 10:
+            elif not x_increasing and keypoint[0] > previous_coordinates[0] + direction_leeway:
                 remove_list.append(i)
         if y_increasing is not None:
             # If y coordinates are increasing (ball falling), filter keypoints with lower y
@@ -173,7 +172,7 @@ def closest_ball_index(previous_coordinates, valid_keypoints, max_dist):
     return None
 
 
-def identify_ball(previous_coordinates, valid_keypoints, max_dist=150):
+def identify_ball(previous_coordinates, valid_keypoints, max_dist=200):
     """Identify the next keypoint in trajectory.
     
     Returns the closest valid keypoint.
@@ -192,9 +191,9 @@ def track_single_ball(all_keypoints, frame_idx, keypoint_idx_in_first_frame, max
     """Tracks a single ball’s keypoint trajectory.
     
     :param list all_keypoints: all remaining keypoints.
-    :param int frame idx: index of frame with the first keypoint.
+    :param int frame_idx: index of frame with the first keypoint.
     :param int keypoint_idx_in_first_frame: index of the keypoint in first frame.
-    :param int max_list_frame_nb: maximum number of frames to continue searching for ball trajectory.
+    :param int max_lost_frame_nb: maximum number of frames to continue searching for ball trajectory.
     :param bool remove_keypoints: if True, keypoints that are used in the trajectory are removed from
     the keypoints list.
     """ 
@@ -203,20 +202,22 @@ def track_single_ball(all_keypoints, frame_idx, keypoint_idx_in_first_frame, max
     if remove_keypoints:
         all_keypoints[frame_idx].remove(previous_coordinates)
     nb_frames_ball_lost = 0
+    # Keep track of trajectory direction
     x_increasing = None
     y_increasing = None
     # Keypoints belonging to the ball’s trajectory
     while nb_frames_ball_lost < max_lost_frame_nb and frame_idx < len(all_keypoints) - 1:
         next_keypoints = all_keypoints[frame_idx + 1]  # All keypoints in the next frame
-        # Determing which keypoints are valid given the balls trajectory directions
+        # Determine which keypoints are valid given the balls trajectory directions
         valid_keypoints = filter_valid_keypoints(previous_coordinates, next_keypoints,
                                                  x_increasing, y_increasing)
-        # Determing the next keypoint in the balls trajectory
+        # Determine the next keypoint in the balls trajectory
         new_coordinates = identify_ball(previous_coordinates, valid_keypoints)
         if new_coordinates is not None:
             # Update trajectory directions and keypoint variables
-            x_increasing = True if new_coordinates[0] > previous_coordinates[0] else False
-            y_increasing = True if new_coordinates[1] > previous_coordinates[1] else False
+            if x_increasing is None:
+                x_increasing = True if new_coordinates[0] > previous_coordinates[0] else False
+            y_increasing = True if new_coordinates[1] > previous_coordinates[1] + 10 else False
             previous_coordinates = new_coordinates
             nb_frames_ball_lost = 0
             trajectory.add_point(frame_idx + 1, previous_coordinates)
@@ -240,7 +241,7 @@ def filter_on_y_height(keypoints):
     for frame_keypoints in keypoints:
         filtered_frame_keypoints = []
         for keypoint in frame_keypoints:
-            if keypoint[1] < 1.2 * mean:
+            if keypoint[1] < 1.4 * mean:
                 filtered_frame_keypoints.append(keypoint)
         filtered_keypoints.append(filtered_frame_keypoints)
     return filtered_keypoints
@@ -282,7 +283,7 @@ def filter_trajectories(trajectories):
     """
     # For now just filter out short trajectories, could reintroduce the removed keypoints into other 
     # trajectories (could belong to another one)
-    filtered_trajectories = [trajectory for trajectory in trajectories if len(trajectory.points) > 2]
+    filtered_trajectories = [trajectory for trajectory in trajectories if len(trajectory.points) > 3]
     return filtered_trajectories
 
 
@@ -301,13 +302,6 @@ def trajectory_to_sparse_keypoints(trajectories, length):
 
 
 ## Lucas-Kanade method
-
-def get_active_trajectories(trajectories, frame, max_staleness):
-    """Filters out trajectories that are stale or that have not yet started"""
-    active_trajectories = [trajectory for trajectory in trajectries
-                           if trajectory.is_active(frame, max_staleness)]
-    return active_trajectories
-    
 
 def complete_trajectory_within_span(trajectory, lk_params, min_dist):
     """
@@ -408,8 +402,7 @@ def draw_trajectories(frames, trajectories):
     return displays
 
 
-
-if __name__ == '__main__':
+def parse_arguments():
     parser = ArgumentParser()
     parser.add_argument(
         dest='file', type=str, help='Path to video file.'
@@ -439,7 +432,12 @@ if __name__ == '__main__':
         help="Display speed in fpm. If given when using the output-path argument, the output is displayed as well as saved."
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_arguments()
+
     ## Get video
     print("Getting video")
     frames = np.array(utils.read_video(args.file))
@@ -468,11 +466,11 @@ if __name__ == '__main__':
     # Use blog coordinates to determine ball trajectories
     trajectories = keypoints_to_trajectory(frames_keypoints)
 
+    # Fill trajectory gaps using the Lucas-Kanade method
+    complete_trajectories(trajectories, frames, min_dist=50)
+
     # Filter trajectories
     filtered_trajectories = filter_trajectories(trajectories)
-
-    # Fill trajectory gaps using the Lucas-Kanade method
-    complete_trajectories(filtered_trajectories, frames, min_dist=50)
 
     # Determine final ball coordinates for each frame
     sparse_keypoints = trajectory_to_sparse_keypoints(
@@ -480,7 +478,7 @@ if __name__ == '__main__':
         len(frames)
     )
     if args.draw_trajectory_lines:
-        output = draw_trajectories(frames, trajectories)
+        output = draw_trajectories(frames, filtered_trajectories)
     else:
         output = []
         for i, frame in enumerate(frames):
