@@ -161,16 +161,26 @@ utils.display_frames(optical_flows, fps=10)
 
 
 # %% [markdown]
-# ## Circle detection with hough transform
+# ## Cleaning movement regions with Erode/Dilate
 
 # %%
-def expand_foreground(img, it):
+def blobify(img):
+    kernel_erode = np.ones((3,3), dtype=np.uint8)
+    kernel_dilate = np.ones((3,3), dtype=np.uint8)
     res = img.copy()
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    res = cv2.erode(res, kernel, 15)
-    res = cv2.dilate(res, kernel, iterations=it)
+    for i in range(4):
+        res= cv2.erode(res, kernel_erode, iterations=2)
+        res = cv2.dilate(res, kernel_dilate, iterations=2)
     return res
 
+
+
+# %%
+frames_blob = [blobify(frame) for frame in foregrounds]
+utils.display_frames(frames_blob, fps=5)
+
+# %% [markdown]
+# ## Circle detection with hough transform
 
 # %%
 results = [np.copy(frame) for frame in frames[:100]]
@@ -190,34 +200,23 @@ for display, frame in zip(results, frames_blob):
             cv2.rectangle(display, (x - 5, y - 5), (x + 5, y + 5), (0, 128, 255), -1)
             # show the output image
 
+
+# %%
+def get_keypoints_hough(img):
+    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=60, minRadius=10, maxRadius=50)
+    keypoints = [[x, y] for (x, y, r) in circles[0, :]] if circles is not None else []
+    return keypoints
+
+
+# %%
+all_hough_kp = [get_keypoints_hough(frame) for frame in frames_blob]
+
 # %%
 time.sleep(3)
 utils.display_frames(results, fps=10)
 
-# %%
-cv2.imwrite("./data/report/hough_circles.png", results[10][:, 500:1350])
-
-
 # %% [markdown]
 # ## blob detection
-
-# %%
-def blobify(img):
-    kernel_erode = np.ones((3,3), dtype=np.uint8)
-    kernel_dilate = np.ones((3,3), dtype=np.uint8)
-    res = img.copy()
-    for i in range(4):
-        res= cv2.erode(res, kernel_erode, iterations=2)
-        res = cv2.dilate(res, kernel_dilate, iterations=2)
-    return res
-
-frames_blob = [blobify(frame) for frame in foregrounds]
-
-# %%
-cv2.imwrite("./data/report/erode_dilate.png", frames_blob[10][:, 500:1350])
-
-# %%
-utils.display_frames(frames_blob, fps=5)
 
 # %%
 params = cv2.SimpleBlobDetector_Params()
@@ -244,6 +243,12 @@ index_img = 20
 detector = cv2.SimpleBlobDetector_create(params)
 frames_keypoints = []
 
+for i, frame in enumerate(frames_blob):
+    keypoints = detector.detect(frame)
+    frames_keypoints.append([keypoint.pt for keypoint in keypoints])
+
+
+# %%
 def draw_keypoints(img, keypoints, color=None, radius=None):
     if color == None:
         color=np.random.randint(0,256,size=3).tolist()
@@ -254,14 +259,6 @@ def draw_keypoints(img, keypoints, color=None, radius=None):
         cv2.circle(result, (int(keypoint[0]), int(keypoint[1])), radius, color=color, thickness=-1)
     return result
 
-results = []
-for i, frame in enumerate(frames_blob):
-    keypoints = detector.detect(frame)
-    frames_keypoints.append([keypoint.pt for keypoint in keypoints])
-    results.append(draw_keypoints(frames[i], frames_keypoints[i], color=(0, 255, 0)))
-
-
-# %%
 def draw_blobs(img, blobs, keypoints, min_dist=70):
     res = img.copy()
     contour, hier = cv2.findContours(blobs,cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -280,21 +277,16 @@ def draw_blobs(img, blobs, keypoints, min_dist=70):
 blobs = [draw_blobs(frame, blob, kp) for (frame, blob, kp) in zip(frames, frames_blob, frames_keypoints)]
 
 # %%
-utils.display_frames(blobs, fps=10)
+hough_kp = [draw_keypoints(frame, kp, color=(0, 255, 0)) for frame, kp in zip(frames, all_hough_kp)]
 
 # %%
-cv2.imwrite("./data/report/blobs.png", blobs[10][:, 500:1350])
-
-# %%
-keypoints[0].size
-
-# %%
-utils.display_frames(results, fps=10)
+utils.display_frames(hough_kp, fps=10)
 
 
 # %% [markdown]
 # ## Finding trajectories with Lucas-Kanade method
 
+# %%
 class Trajectory:
     def __init__(self, frame_i, startpoint):
         self.start_frame = frame_i
@@ -347,8 +339,6 @@ def remove_stale_trajectories(trajectories, max_staleness):
     return stale_trajectories
             
 trajectories = get_trajectories(frames[:100], frames_keypoints, min_dist=200, max_staleness=3)
-
-# %%
 
 # %%
 print(max([len(trajectory.points) for trajectory in trajectories]))

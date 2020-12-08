@@ -39,6 +39,17 @@ def blobify(img):
     return res
 
 
+def get_keypoints_hough(img):
+    """get keypoints using the Hough transfrom for circle detection
+
+    :param img: np.ndarray, image to get keypoints from
+    :return: list(list(float, float)), list of keypoints in the image
+    """
+    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=60, minRadius=10, maxRadius=50)
+    keypoints = [[x, y] for (x, y, r) in circles[0, :]] if circles is not None else []
+    return keypoints
+
+
 def get_blob_detector():
     """
 
@@ -416,12 +427,16 @@ def parse_arguments():
         help="Frame to end detection on."
     )
     parser.add_argument(
-        "--draw-trajectory-lines", action="store_true",
-        help="If set, the ball trajectories are drawn as lines."
+        "--movement-path", type=str, default=None,
+        help="Path to save the result of the movement extraction into. the movement video will not be saved by default"
     )
     parser.add_argument(
-        "--output-path", type=str, default=None,
-        help="The output is saved to the given path. If no output path is given, the output is simply displayed."
+        "--keypoints-path", type=str, default=None,
+        help="Path to save the result of the keypoints extraction into. the keypoints video will not be saved by default"
+    )
+    parser.add_argument(
+        "--trajectories-path", type=str, default=None,
+        help="Path to save the result of the trajectory results into. the trajectory video will not be saved by default"
     )
     parser.add_argument(
         "--save-fps", type=int, default=26,
@@ -431,7 +446,10 @@ def parse_arguments():
         "--display-fps", type=int, default=None,
         help="Display speed in fpm. If given when using the output-path argument, the output is displayed as well as saved."
     )
-
+    parser.add_argument(
+        "--keypoints-method", type=str, default="blob",
+        help="(blob|hough): method to use to extract keypoints. defaults to blob"
+    )
     return parser.parse_args()
 
 
@@ -450,17 +468,28 @@ if __name__ == '__main__':
     ## Remove background
     foregrounds = get_foreground_masks(frames)
 
-    ## Blob detection
+    ## Movement image cleaning
     # Erode and dilate to create nicer blobs
     frames_blob = [blobify(frame) for frame in foregrounds]
-    # Detect blobs
-    detector = get_blob_detector()
-    frames_keypoints = []  # blob coordinates in each frame
-    for i, frame in enumerate(frames_blob):
-        # Get keypoints for given frame
-        keypoints = detector.detect(frame)
-        # Add the frame’s keypoints to keypoint list
-        frames_keypoints.append([keypoint.pt for keypoint in keypoints])
+
+    if args.movement_path:
+        print(f"Saving movements in {args.movement_path}")
+        utils.save_video(frames_blob, args.movement_path, args.save_fps)
+
+    ## Keypoints detection
+    # Using Hough transform
+    if args.keypoints_method == "hough":
+        frames_keypoints = [get_keypoints_hough(frame) for frame in frames_blob]
+
+    # Using blob detection
+    else :
+        detector = get_blob_detector()
+        frames_keypoints = []  # blob coordinates in each frame
+        for i, frame in enumerate(frames_blob):
+            # Get keypoints for given frame
+            keypoints = detector.detect(frame)
+            # Add the frame’s keypoints to keypoint list
+            frames_keypoints.append([keypoint.pt for keypoint in keypoints])
 
     ## Detect ball trajectories
     # Use blog coordinates to determine ball trajectories
@@ -477,26 +506,17 @@ if __name__ == '__main__':
         filtered_trajectories,
         len(frames)
     )
-    if args.draw_trajectory_lines:
-        output = draw_trajectories(frames, filtered_trajectories)
-    else:
-        output = []
-        for i, frame in enumerate(frames):
-            output.append(
-                draw_keypoints(frame, sparse_keypoints[i], color=(0, 255, 0))
-            )
-    print("Finished detection")
-    if args.output_path:
-        print("Saving video")
-        utils.save_video(output, args.output_path, args.save_fps)
-        if args.display_fps:
-            print("Displaying video")
-            utils.display_frames(output, fps=args.display_fps)
 
-    else:
-        print("Displaying video")
-        display_speed = args.display_fps if args.display_fps else 26
-        utils.display_frames(output, fps=display_speed)
+    if args.keypoints_path:
+        keypoints_display = [draw_keypoints(frame, kp) for frame, kp in zip(frames, sparse_keypoints)]
+        print(f"Saving keypoints to path {args.keypoints_path}")
+        utils.save_video(keypoints_display, args.keypoints_path, args.save_fps)
 
+    trajectory_display = draw_trajectories(frames, filtered_trajectories)
 
+    if args.trajectories_path:
+        print(f"Saving trajectories to path {args.trajectories_path}")
+        utils.save_video(keypoints_display, args.keypoints_path, args.save_fps)
 
+    display_speed = args.display_fps if args.display_fps else 26
+    utils.display_frames(trajectory_display, fps=display_speed)
