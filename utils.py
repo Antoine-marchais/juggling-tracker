@@ -70,14 +70,31 @@ def read_video(path):
             cap.release()
     return frames
 
-def display_frames(frames, fps=50):
+
+def save_video(frames, path, fps):
+    """Save list of images as mp4.
+
+    Arguments:
+        frames {list} -- list of images.
+        path {str} -- path to save mp4 to.
+        fps {int} -- number of frames per second for saved mp4.
+    """
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    path = path.split(".")[0] + ".mp4"
+    out = cv2.VideoWriter(path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]))
+    for frame in frames:
+        out.write(frame)
+    out.release()
+
+def display_frames(frames, fps=26):
     """Display the sequence of frames using the fps setting
 
     Arguments:
         frames {list(ndarray)} -- list of frames in the video
 
     Keyword Arguments:
-        fps {int} -- number of frames per second (default: {50})
+        fps {int} -- number of frames per second (default: {26})
     """
     for frame in frames:
         resized = scale_to_screen(frame)

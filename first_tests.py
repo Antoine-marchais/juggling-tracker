@@ -295,7 +295,6 @@ utils.display_frames(results, fps=10)
 # %% [markdown]
 # ## Finding trajectories with Lucas-Kanade method
 
-# %%
 class Trajectory:
     def __init__(self, frame_i, startpoint):
         self.start_frame = frame_i
