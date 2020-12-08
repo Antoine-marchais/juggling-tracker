@@ -163,6 +163,9 @@ def filter_valid_keypoints(previous_coordinates, keypoints, x_increasing, y_incr
             # Cannot filter keypoints if y is decreasing as the ball with change direction at some point
             if y_increasing and keypoint[1] < previous_coordinates[1]:
                 remove_list.append(i)
+        if y_increasing is None: # The ball must first go up
+            if keypoint[1] > previous_coordinates[1]:
+                remove_list.append(i)
     return [coordinates for i, coordinates in enumerate(keypoints) if i not in remove_list]
 
 
@@ -294,7 +297,7 @@ def filter_trajectories(trajectories):
     """
     # For now just filter out short trajectories, could reintroduce the removed keypoints into other 
     # trajectories (could belong to another one)
-    filtered_trajectories = [trajectory for trajectory in trajectories if len(trajectory.points) > 3]
+    filtered_trajectories = [trajectory for trajectory in trajectories if len(trajectory.span) > 3]
     return filtered_trajectories
 
 
@@ -496,11 +499,11 @@ if __name__ == '__main__':
     # Use blog coordinates to determine ball trajectories
     trajectories = keypoints_to_trajectory(frames_keypoints)
 
-    # Fill trajectory gaps using the Lucas-Kanade method
-    complete_trajectories(trajectories, frames, min_dist=50)
-
     # Filter trajectories
     filtered_trajectories = filter_trajectories(trajectories)
+
+    # Fill trajectory gaps using the Lucas-Kanade method
+    complete_trajectories(filtered_trajectories, frames, min_dist=50)
 
     # Determine final ball coordinates for each frame
     sparse_keypoints = trajectory_to_sparse_keypoints(
