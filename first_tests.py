@@ -2,46 +2,59 @@
 # ---
 # jupyter:
 #   jupytext:
+#     formats: ipynb,py:percent
 #     text_representation:
 #       extension: .py
-#       format_name: light
-#       format_version: '1.5'
+#       format_name: percent
+#       format_version: '1.3'
 #       jupytext_version: 1.4.2
 #   kernelspec:
 #     display_name: 'Python 3.6.9 64-bit (''juggle_tracker'': venv)'
+#     language: python
 #     name: python36964bitjuggletrackervenv5397e930a4e5478eaf4e831a4957fa9d
 # ---
 
+# %% [markdown]
 # # Object tracking tests
 
+# %% [markdown]
 # ## Imports
 
+# %%
 import cv2
 import numpy as np
 import utils
 from tqdm import tqdm
+import time
 # %matplotlib inline
 
+# %%
 frames = utils.read_video("./data/juggling_front.mp4")
 utils.display_frames(frames)
 
+# %% [markdown]
 # ## Image differences
 
+# %% [markdown]
 # Dans un premier temps nous allons calculer la différence entre les images successives de la vidéo, ce qui permet de capturer les brusque variations d'intensité dans le temps:
 
+# %%
 frames_gray = [cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) for frame in frames][:100]
 frames_gray = [cv2.GaussianBlur(frame, (5,5), 0) for frame in frames_gray]
 utils.display_frames(frames_gray, fps=20)
 
 
+# %%
 def diff_thresh(img1, img2, threshold):
     res = np.zeros(img1.shape)
     res[np.abs(img1-img2) > threshold] = 255
     return res
 
 
+# %% [markdown]
 # Le résultat étant assez bruité, nous allons moyenner la différence :
 
+# %%
 def diff_thresh_moy(img1, img2, threshold, window_size):
     res = np.zeros(img1.shape)
     diff = np.abs(img1-img2)
@@ -51,9 +64,10 @@ def diff_thresh_moy(img1, img2, threshold, window_size):
     return res
 
 
+# %% [markdown]
 # Regroupons ces fonctions dans une fonction de différence d'image généralisée : 
 
-# +
+# %%
 def get_diff(img1, img2, mode="basic", window_size=5):
     new_img1 = np.float32(img1)
     new_img2 = np.float32(img2)
@@ -88,25 +102,27 @@ def remove_local_mean(frames, mode="basic", window_size=5, time_delta=5):
         
 
 
-# +
+# %%
 frames_diff = []
 
-#frames_diff = remove_local_mean(frames_gray, mode="mindiff", window_size=7, time_delta=3)
+frames_diff = remove_local_mean(frames_gray, mode="basic", window_size=7, time_delta=5)
 
 for i in tqdm(range(len(frames_gray)-2)):
     frames_diff.append(get_diff(frames_gray[i]/2, frames_gray[i+2]/2, mode="mindiff", window_size=7))
 utils.display_frames(frames_diff)
-# -
 
 utils.display_frames(frames_diff, fps=5)
 
+# %%
 frames_thresh = [cv2.threshold(frame, 10, 255, cv2.THRESH_BINARY)[1] for frame in frames_diff]
+time.sleep(3)
 utils.display_frames(frames_thresh)
 
 
+# %% [markdown]
 # ## Background removal
 
-# +
+# %%
 def get_foreground_masks(frames):
     backsub = cv2.createBackgroundSubtractorMOG2(history=3, varThreshold=10)
     # training the substractor
@@ -117,16 +133,18 @@ def get_foreground_masks(frames):
     foregrounds = []
     for frame in tqdm(frames, desc="applying subtractor : ") :
         foregrounds.append(backsub.apply(frame))
-    return foregrounds
+    return [cv2.threshold(frame, 10, 255, cv2.THRESH_BINARY)[1] for frame in foregrounds]
 
 foregrounds = get_foreground_masks(frames[:100])
 
-# -
 
+# %%
 utils.display_frames(foregrounds, fps=5)
 
+# %% [markdown]
 # ## Extracting movement with optical flow
 
+# %%
 optical_flows = []
 for i_frame in tqdm(range(len(frames_gray)-1)):
     hsv_flow = np.zeros_like(frames[0])
@@ -138,16 +156,28 @@ for i_frame in tqdm(range(len(frames_gray)-1)):
     bgr_flow = cv2.cvtColor(hsv_flow,cv2.COLOR_HSV2BGR)
     optical_flows.append(bgr_flow)
 
+# %%
 utils.display_frames(optical_flows, fps=10)
 
+
+# %% [markdown]
 # ## Circle detection with hough transform
 
-# +
-results = [np.copy(frame) for frame in foregrounds]
+# %%
+def expand_foreground(img, it):
+    res = img.copy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    res = cv2.erode(res, kernel, 15)
+    res = cv2.dilate(res, kernel, iterations=it)
+    return res
 
-for i, frame in enumerate(foregrounds):
+
+# %%
+results = [np.copy(frame) for frame in frames[:100]]
+
+for display, frame in zip(results, frames_blob):
     # detect circles in the image
-    circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, 1.2, 5)
+    circles = cv2.HoughCircles(frame, cv2.HOUGH_GRADIENT, dp=4, minDist=100, param1=100, param2=60, minRadius=10, maxRadius=50)
     # ensure at least some circles were found
     if circles is not None:
     # convert the (x, y) coordinates and radius of the circles to integers
@@ -156,17 +186,22 @@ for i, frame in enumerate(foregrounds):
         for (x, y, r) in circles:
             # draw the circle in the output image, then draw a rectangle
             # corresponding to the center of the circle
-            cv2.circle(results[i], (x, y), r, (0, 255, 0), 4)
-            cv2.rectangle(results[i], (x - 5, y - 5), (x + 5, y + 5), (0, 128, 255), -1)
+            cv2.circle(display, (x, y), r, (0, 255, 0), 4)
+            cv2.rectangle(display, (x - 5, y - 5), (x + 5, y + 5), (0, 128, 255), -1)
             # show the output image
-# -
 
-utils.display_frames(results,fps=10)
+# %%
+time.sleep(3)
+utils.display_frames(results, fps=10)
+
+# %%
+cv2.imwrite("./data/report/hough_circles.png", results[10][:, 500:1350])
 
 
+# %% [markdown]
 # ## blob detection
 
-# +
+# %%
 def blobify(img):
     kernel_erode = np.ones((3,3), dtype=np.uint8)
     kernel_dilate = np.ones((3,3), dtype=np.uint8)
@@ -177,29 +212,32 @@ def blobify(img):
     return res
 
 frames_blob = [blobify(frame) for frame in foregrounds]
-# -
 
+# %%
+cv2.imwrite("./data/report/erode_dilate.png", frames_blob[10][:, 500:1350])
+
+# %%
 utils.display_frames(frames_blob, fps=5)
 
-# +
+# %%
 params = cv2.SimpleBlobDetector_Params()
 
 params.filterByColor = True
 params.blobColor = 255
 
 params.filterByCircularity = True
-params.minCircularity = 0.3
+params.minCircularity = 0.1
 
 params.filterByArea = True
-params.minArea = 1000
+params.minArea = 300
 params.maxArea = 1000000
 
 params.filterByConvexity = False
 
-params.filterByInertia = False
-params.minInertiaRatio = 0.2
+params.filterByInertia = True
+params.minInertiaRatio = 0.4
 
-params.minDistBetweenBlobs = 100
+params.minDistBetweenBlobs = 70
 
 index_img = 20
 
@@ -221,14 +259,43 @@ for i, frame in enumerate(frames_blob):
     keypoints = detector.detect(frame)
     frames_keypoints.append([keypoint.pt for keypoint in keypoints])
     results.append(draw_keypoints(frames[i], frames_keypoints[i], color=(0, 255, 0)))
-# -
 
+
+# %%
+def draw_blobs(img, blobs, keypoints, min_dist=70):
+    res = img.copy()
+    contour, hier = cv2.findContours(blobs,cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contour:
+        if len(keypoints) > 0:
+            M = cv2.moments(cnt)
+            center = np.array([int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])])
+            dists = np.array([np.sum((np.array(kp)-center)**2)**0.5 for kp in keypoints])
+            if np.min(dists) <= min_dist :
+                cv2.drawContours(res,[cnt],0,[10, 180, 10],-1)
+    res = draw_keypoints(res, keypoints, color=(0, 0, 200))
+    return res
+
+
+# %%
+blobs = [draw_blobs(frame, blob, kp) for (frame, blob, kp) in zip(frames, frames_blob, frames_keypoints)]
+
+# %%
+utils.display_frames(blobs, fps=10)
+
+# %%
+cv2.imwrite("./data/report/blobs.png", blobs[10][:, 500:1350])
+
+# %%
+keypoints[0].size
+
+# %%
 utils.display_frames(results, fps=10)
 
 
+# %% [markdown]
 # ## Finding trajectories with Lucas-Kanade method
 
-# + tags=["outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend", "outputPrepend"]
+# %%
 class Trajectory:
     def __init__(self, frame_i, startpoint):
         self.start_frame = frame_i
@@ -281,17 +348,20 @@ def remove_stale_trajectories(trajectories, max_staleness):
     return stale_trajectories
             
 trajectories = get_trajectories(frames[:100], frames_keypoints, min_dist=200, max_staleness=3)
-# -
 
+# %%
+
+# %%
 print(max([len(trajectory.points) for trajectory in trajectories]))
 print(len(trajectories))
 print(sum([len(kps) for kps in frames_keypoints]))
 
-best_trajectories = sorted(trajectories, key=lambda trajectory:len(trajectory.points), reverse=True)[:10]
+# %%
+best_trajectories = sorted(trajectories, key=lambda trajectory:len(trajectory.points), reverse=True)[:20]
 print(best_trajectories[0].points)
 
 
-# +
+# %%
 def draw_trajectory(img, trajectory, color=None, thickness=None):
     if color == None:
         color = np.random.randint(0, 256, size=3).tolist()
@@ -309,7 +379,7 @@ img_trajectory = draw_trajectory(frames[trajectory.start_frame], trajectory)
 utils.display_img(img_trajectory)
 
 
-# +
+# %%
 def view_trajectories(frames, trajectories, fps=5):
     displays = [frame.copy() for frame in frames]
     colors = [np.random.randint(0, 256, size=3).tolist() for trajectory in trajectories]
@@ -322,6 +392,5 @@ def view_trajectories(frames, trajectories, fps=5):
     utils.display_frames(displays, fps=fps)
 
 view_trajectories(frames[:100], best_trajectories, fps=5)
-# -
 
-
+# %%
