@@ -23,6 +23,9 @@ python track.py  FILE_PATH [--start-frame INT] [--end-frame int] [--movement-pat
 [--keypoints-method METHOD]
 ```
 
+For a complete detail of the output of each step of the algorithm, we recommand specifying
+`--movement-path` `--keypoints-path` and `--trajectories-path` to get the complete output.
+
 For more information on how to use the arguments, run `python track.py --help`
 
 ## Results and Test Data
