@@ -81,8 +81,11 @@ def save_video(frames, path, fps, color=True):
     """
     # Define the codec and create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    path = path.split(".")[0] + ".mp4"
-    out = cv2.VideoWriter(path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]), isColor=color)
+    save_path = ".".join(path.split(".")[:-1]) + ".mp4"
+    if save_path == ".mp4":
+        save_path = path + ".mp4"
+    print(save_path)
+    out = cv2.VideoWriter(save_path, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]), isColor=color)
     for frame in frames:
         out.write(frame)
     out.release()
