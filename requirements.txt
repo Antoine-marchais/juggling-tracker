@@ -1,4 +1,4 @@
 tqdm==4.49.0
 opencv_python==4.4.0.42
-numpy==1.18.5
+numpy==1.22.0
 matplotlib==3.3.1
